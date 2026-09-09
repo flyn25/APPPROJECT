@@ -1,0 +1,36 @@
+{
+  "summary": "Backend-only iteration. Ran 35 pytest tests against public preview against AUM Umum BK API covering health, auth (demo/register/login/me/negative), format verification (75/155/200/210/265 all match), school/class CRUD with mode isolation, wizard save (POST /api/respondents), scoring individual+group (analytics-loading regression: /api/scoring/group returned in <1s), rekap sekolah & bandingkan kelas (matrix), Excel import (valid + transactional invalid), export xlsx/pdf individual and group, and audit list + individual breakdown. 33 passed, 2 xfailed (documented backend bugs).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/scoring/individual", "issue": "Unknown format_id causes HTTP 500 (KeyError) instead of 400. In score_individual(), line 275 does `config = FORMATS[format_id]` BEFORE calling validate_selection() (which handles the 400). Fix: call validate_selection first or use FORMATS.get() with an HTTPException(400)."},
+      {"endpoint": "POST /api/import/excel", "issue": "parse_problem_numbers() breaks when pandas column type is coerced to float64 (mixed string/NaN cells like leading-zero '001' plus empty cell). float 1.0 -> str '1.0' -> re.findall yields ['1','0'] -> [0,1], producing a spurious 0 and failing subset validation. Fix in parse_problem_numbers: `if isinstance(value, float): value = int(value) if not pd.isna(value) else None` before regex."},
+      {"endpoint": "server.py env", "issue": "Frontend .env only exposes EXPO_PUBLIC_BACKEND_URL (not EXPO_BACKEND_URL as documented in system rules). Tests fall back accordingly; main agent should decide on canonical name."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_backend.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Fix score_individual: reorder so validate_selection runs first (or use FORMATS.get()) so unknown format returns 400 instead of 500.",
+    "Fix parse_problem_numbers in /app/backend/server.py to coerce integer-like floats to int before regex (prevents leading-zero import corruption).",
+    "Consider renaming EXPO_PUBLIC_BACKEND_URL to EXPO_BACKEND_URL for consistency with platform conventions, or update docs."
+  ],
+  "critical_code_review_comments": [
+    "server.py is ~755 lines — approaching the 700-line split threshold; consider splitting scoring/rekap/import/export into modules.",
+    "Formats 2-5 mapping is transparently flagged source_conflict_provisional (by design per PRD), but domain totals and unique item counts all reconcile to declared totals (75/155/200/210/265).",
+    "Endpoint POST /api/schools does not enforce name uniqueness per user; duplicates allowed. Not a bug, but a UX consideration.",
+    "processing_results and audit_logs use payload.mode (from RespondentInput default 'demo') instead of user.mode in POST /api/respondents (lines 463-464). If a real user submits with default mode, mode tag drifts. Prefer user.mode consistently."
+  ],
+  "updated_files": ["/app/backend/tests/test_backend.py", "/app/test_reports/iteration_2.json", "/app/test_reports/pytest/pytest_results.xml"],
+  "success_rate": {"backend": "94% (33/35 pass; 2 xfail = documented backend bugs)", "frontend": "n/a (backend-only scope)"},
+  "seed_data_creation": "Test suite creates ephemeral real-mode users (TEST_<uuid>@aum.local) and demo respondents (TEST_wizard, TEST_imp*) via /api/respondents and /api/import/excel; not cleaned up between runs (isolated by TEST_ prefix and unique ids). No production data mutated.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Two confirmed backend bugs remain: (1) scoring/individual returns 500 on unknown format_id; (2) import/excel corrupts leading-zero problem numbers when a column has mixed int/NaN due to str(float) coercion. After fixes, remove @pytest.mark.xfail from test_scoring_unknown_format and test_import_mixed_leading_zero_bug in /app/backend/tests/test_backend.py and re-run pytest. Analytics stuck-loading bug is NOT reproducible on backend — /api/scoring/group by class_id returned in <1s. Frontend fix (groupLoading vs screenLoading) still needs UI validation in a subsequent frontend-testing iteration.",
+  "rca_of_issue": "Analytics stuck-loading (frontend) not reproducible from backend: /api/scoring/group returned data in <1s for both demo classes with respondent_count and 10 domain rows. Backend health, auth (demo/JWT), format verification, schools/classes CRUD with owner_id isolation for real mode, wizard save with heavy⊂selected validation, rekap school+comparison aggregations, Excel import transactional rollback (422 on any invalid row), and exports (xlsx/pdf, %PDF magic bytes verified) all work as specified. Two minor backend bugs found and documented as xfails: (a) score_individual accesses FORMATS[format_id] before validate_selection so KeyError leaks as 500; (b) parse_problem_numbers stringifies numpy floats yielding spurious zeros for leading-zero item numbers. No MOCKED APIs."
+}

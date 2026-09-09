@@ -1,61 +1,60 @@
-# PRD — AUM Umum BK Mobile
+# AUM Umum BK Mobile — Product Requirements
 
-## Problem statement
-Membangun sistem mobile untuk Guru BK yang mengikuti Master Prompt Aplikasi Pengolahan AUM Umum dan dokumen sumber lampiran: input responden, pemilihan masalah, masalah berat, informasi tambahan, pengolahan deterministik, hasil individual/kelompok, rekap, audit, dan pengelolaan data rahasia.
+## Ringkasan Produk
+Aplikasi mobile Expo/React Native untuk Guru BK melakukan input, pengolahan, analisis, dan pelaporan Alat Ungkap Masalah (AUM) Umum secara deterministik dan rahasia.
 
-## Architecture
-- Frontend: Expo React Native + Expo Router entry + TypeScript, safe-area aware, four-area mobile workspace.
-- Backend: FastAPI pada port 8001 dengan endpoint `/api`, validasi server-side, deterministic AUM Scoring Engine.
-- Database: MongoDB melalui Motor; collections konfigurasi (`aum_formats`, `aum_items`), data mentah (`respondents`), hasil (`processing_results`), sekolah/kelas, dan `audit_logs`.
-- Configuration: five format configurations are seeded as editable database data with domain counts and item mappings; scoring validates total items and heavy-problem subset rules before producing results.
-- Privacy: demo mode is isolated from real mode, reports use non-diagnostic language, and audit output exposes formulas.
+## Pengguna & Mode
+- **Guru BK** dengan autentikasi email/password (JWT) atau **Masuk Demo Instan**.
+- **Mode Demo**: data contoh terpisah untuk mencoba tanpa data pribadi.
+- **Mode Data Nyata**: data terkunci per akun (owner_id) — satu Guru BK bisa mengelola banyak sekolah.
 
-## User personas
-- Guru BK: memasukkan dan meninjau AUM individual, mengelola kelas, serta menyiapkan tindak lanjut layanan.
-- Koordinator BK: melihat profil kelompok, rekap kelas, perbandingan bidang, dan audit perhitungan.
-- Administrator: menjaga konfigurasi format, backup, integritas data, dan audit trail.
+## Format AUM yang Didukung
+| Format | Target | Total Item |
+|---|---|---|
+| F1 | Siswa SD | 75 |
+| F2 | Siswa SLTP | 155 |
+| F3 | Siswa SLTA | 200 |
+| F4 | Mahasiswa Perguruan Tinggi | 210 |
+| F5 | Warga Masyarakat | 265 |
 
-## Core requirements (static)
-1. Lima format: SD 75, SLTP 155, SLTA 200, Perguruan Tinggi 210, Masyarakat 265 item.
-2. Bidang dan kode AUM mengikuti sumber, termasuk HPW untuk Format 5.
-3. Wizard tiga langkah: masalah terpilih, masalah berat sebagai subset, dan informasi tambahan.
-4. Individual: jumlah, persentase, nomor masalah, masalah berat, dan audit rumus.
-5. Kelompok: minimum, maksimum, JML, persentase, rata-rata, JML berat, dan rata-rata berat.
-6. Tidak memakai AI untuk menentukan skor dan tidak membuat diagnosis/kategori baru.
-7. Data mentah dipisahkan dari hasil olahan dan dapat ditelusuri.
-8. Mode Demo dan Data Nyata terpisah; data pribadi bersifat rahasia.
-9. Dashboard, database sekolah, analitik, audit, import template, serta export actions.
+Bidang: JDK, DPI, HSO, EDK, KDP, PDP, ANM, HMM, HPW (F5), KHK, WSG. Mapping Format 1 = konsisten dengan sumber; Format 2–5 = `source_conflict_provisional` (repair deterministik untuk rentang PDF sumber yang tumpang tindih; jumlah item resmi dipertahankan). Status transparan pada `/api/formats/verification`.
 
-## Implemented
+## Fitur Utama
+1. **Ringkasan** — dashboard: sekolah aktif, metrik responden/kelas/masalah, aktivitas terbaru, shortcut Rekap.
+2. **Database** — multi-sekolah per akun, kelas per sekolah, responden per kelas; Import Excel transaksional + template unduh; tap responden = buka hasil individual dengan rincian per bidang.
+3. **Wizard 3 Langkah AUM** — Langkah 1 (nama, ID, jenis kelamin, kelas, format, nomor masalah), Langkah 2 (masalah berat = subset Langkah 1), Langkah 3 (kelengkapan, masalah lain, keinginan konseling).
+4. **Analitik** — 3 mode dalam satu tab:
+   - **Kelas**: JML, %, min, max, rata, JML berat, rata berat, ranking bidang.
+   - **Rekap Sekolah**: agregasi lintas kelas, distribusi per bidang, ringkasan per kelas.
+   - **Bandingkan Kelas**: matrix bidang × kelas.
+5. **Audit** — log perhitungan + telusuri per responden dengan rumus per bidang.
+6. **Export** — PDF & XLSX (individual & kelompok) via `expo-sharing`.
 
-### 2026-09-09
-- Mengganti starter screen dengan AUM Umum BK Mobile: auth/demo entry, dashboard KPI, database kelas/responden, analitik kelompok, audit, dan bottom navigation.
-- Menambahkan wizard tiga langkah dengan identitas, lima pilihan format, pencarian nomor, masalah berat, pertanyaan tambahan, validasi, dan penyimpanan.
-- Menambahkan FastAPI scoring engine deterministik, konfigurasi lima format, seed demo terpisah, API dashboard, schools/classes/respondents, individual/group scoring, dan audit logs.
-- Menampilkan hasil AUM individual lengkap dengan total, persentase keseluruhan, per bidang, masalah berat, dan frasa non-diagnostik.
-- Mengisi design tokens sesuai `design_guidelines.json`, memperbaiki TypeScript tema Expo, dan menambahkan paket `@expo/vector-icons`.
-- Backend health, format totals, scoring, group scoring, subset validation, dan alur preview mobile telah diuji: lulus 100% pada iteration 1.
+## Prinsip Rahasia & Deterministik
+- Skor dihitung algoritma deterministik, tanpa AI/ML.
+- Tidak ada kategori diagnosis (rendah/tinggi/gangguan psikologis).
+- Data mentah terpisah dari hasil; hasil dapat dihitung ulang.
+- Setiap perhitungan bisa ditelusuri (`/api/audit/individual/{id}`).
 
-## Prioritized backlog
+## Arsitektur
+- **Frontend**: Expo Router, single `/app/frontend/app/index.tsx`, bottom 4 tabs, theme dari `src/theme.ts`.
+- **Backend**: FastAPI + MongoDB. Semua endpoint prefix `/api`.
+- **Auth**: JWT (HS256), bcrypt.
+- **Import**: pandas + openpyxl transaksional.
+- **Export**: reportlab (PDF), openpyxl (XLSX).
 
-### P0 — sebelum data nyata
-- Verifikasi ulang setiap nomor item Format 2–5 terhadap tabel resmi sumber asli bila tersedia dalam bentuk tabel yang tidak ambigu; konfigurasi backend sudah editable dan total/domain validation sudah aktif.
-- Implementasikan autentikasi akun Guru BK persisten, role-based access, HTTPS deployment policy, dan session expiry.
-- Implementasikan import Excel transactional dengan validasi per baris dan rollback penuh.
-- Implementasikan export PDF/Excel nyata dengan data yang sama persis dengan hasil aplikasi.
+## Endpoint Utama
+- `/api/auth/{login|register|demo|me}`
+- `/api/formats`, `/api/formats/verification`
+- `/api/schools` GET/POST, `/api/classes?school_id=` GET/POST
+- `/api/respondents` GET/POST
+- `/api/scoring/{individual|group}` POST
+- `/api/rekap/school/{id}`, `/api/rekap/comparison?school_id=`
+- `/api/audit`, `/api/audit/individual/{id}`
+- `/api/import/{excel|template}`
+- `/api/export/{individual|group}/{id}?format=xlsx|pdf`
 
-### P1 — peningkatan operasional
-- Form pengaturan sekolah/tahun ajaran/jenjang/kelas dan mode Data Nyata end-to-end.
-- Backup/restore MongoDB, secure deletion, audit trail perubahan data mentah, dan regenerate result dari raw responses.
-- Rekap sekolah lintas kelas/jenjang dan perbandingan beberapa kelas pada satu layar.
-- Filter analitik berdasarkan gender/jenjang dan detail kontribusi tiap responden.
-
-### P2 — penyempurnaan
-- Import daftar siswa lebih cepat dengan template yang dapat diunduh langsung.
-- Pencarian histori hasil dan penyaringan berdasarkan rentang tanggal.
-- Pengaturan profil Guru BK dan preferensi tampilan.
-
-## Next tasks
-1. Kunci mapping resmi setelah verifikasi dokumen sumber tabel.
-2. Lengkapi auth produksi dan pembatasan akses sekolah.
-3. Tambahkan pipeline import/export berbasis file dan automated regression dataset 10 responden per format.
+## Roadmap Berikutnya
+- Verifikasi manual mapping Format 2–5 saat user memberikan tabel resmi.
+- Multi tahun ajaran per sekolah, filter tahun.
+- Backup & unduh seluruh data akun.
