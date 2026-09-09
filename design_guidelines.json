@@ -1,0 +1,172 @@
+{
+  "app_name": "AUM Umum BK Mobile",
+  "personality": "1 iOS-Native Clean (Variant: Space Grotesk / Plus Jakarta Sans)",
+  "personality_one_liner": "An authoritative, clean, and highly efficient mobile command center for school counselors (Guru BK) to administer AUM Umum, compute deterministic scores, and visualize student wellbeing insights instantly.",
+  "color": {
+    "surface": "#F8FAFC",
+    "onSurface": "#0F172A",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1E293B",
+    "surfaceTertiary": "#F1F5F9",
+    "onSurfaceTertiary": "#475569",
+    "surfaceInverse": "#0F172A",
+    "onSurfaceInverse": "#F8FAFC",
+    "brand": "#0F766E",
+    "brandPrimary": "#0F766E",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#14B8A6",
+    "onBrandSecondary": "#0F172A",
+    "brandTertiary": "#CCFBF1",
+    "onBrandTertiary": "#115E59",
+    "success": "#10B981",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#FFFFFF",
+    "error": "#EF4444",
+    "onError": "#FFFFFF",
+    "info": "#0EA5E9",
+    "onInfo": "#FFFFFF",
+    "border": "#E2E8F0",
+    "borderStrong": "#CBD5E1",
+    "divider": "#F1F5F9",
+    "muted": "#64748B",
+    "onBrand": "#FFFFFF"
+  },
+  "typography": {
+    "displayFontFamily": "SpaceGrotesk_700Bold",
+    "textFontFamily": "PlusJakartaSans_400Regular",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Maintain consistent iOS-native padding rhythms with comfortable vertical spacing and clear grouping of related analytics cards.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use translucent blurred headers over scrolling content",
+      "Apply glass effects on sticky bottom action bars for wizard and analysis screens"
+    ],
+    "dont's": [
+      "Never apply blur to form input fields or dense data tables",
+      "Avoid stacking multiple blur containers on top of each other"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Auth & Demo Mode",
+      "purpose": "Secure authentication for Guru BK and one-tap sandbox Demo Mode switch with pre-populated school datasets.",
+      "states": {
+        "loading": "Authenticating credentials or seeding demo database...",
+        "empty": "No active counselor session found.",
+        "error": "Authentication failed. Please check credentials or network connection."
+      },
+      "layout": "Centered clean branding container with role selection toggle, credential inputs, and a prominent 'Masuk Demo Instan' sandbox launcher button."
+    },
+    {
+      "name": "Dashboard / Home",
+      "purpose": "At-a-glance command center displaying active school respondent counts, quick action wizards, and high-priority student wellbeing alerts.",
+      "states": {
+        "loading": "Loading counselor metrics and respondent summaries...",
+        "empty": "No active school year selected. Tap 'Atur Sekolah' to begin.",
+        "error": "Failed to sync dashboard analytics. Tap to retry."
+      },
+      "layout": "Scrollable vertical container with sticky header, school context switcher banner, 2-column KPI metric cards, quick-launch AUM Format selector, and recent respondent logs."
+    },
+    {
+      "name": "Database Sekolah & Kelas",
+      "purpose": "Hierarchical management of schools, academic years, educational levels, classes, and respondent student lists with import/export capabilities.",
+      "states": {
+        "loading": "Fetching institutional hierarchy and student records...",
+        "empty": "No classes registered yet. Add a class or import Excel template.",
+        "error": "Failed to load database. Please retry connection."
+      },
+      "layout": "Segmented level selector (SD, SLTP, SLTA, PT, Masyarakat), expandable class accordion list, floating action button for new respondent, and Excel/PDF action sheet."
+    },
+    {
+      "name": "AUM Input Wizard",
+      "purpose": "Step-by-step 3-step questionnaire wizard for respondent problem selection, severe problem flagging, and supplemental information.",
+      "states": {
+        "loading": "Initializing AUM questionnaire bank...",
+        "empty": "Questionnaire items not available.",
+        "error": "Failed to save questionnaire step progress."
+      },
+      "layout": "Progress indicator header, step card with category tabs, tappable statement items with visual selection state, and sticky bottom navigation bar with 'Lanjut' and 'Simpan'."
+    },
+    {
+      "name": "Deterministic Scoring & Individual Results",
+      "purpose": "Calculates and displays individual AUM profile scores across problem areas with confidential, non-diagnostic guidance notes.",
+      "states": {
+        "loading": "Executing deterministic scoring engine...",
+        "empty": "No scoring data available for this respondent.",
+        "error": "Scoring calculation error. Check audit logs."
+      },
+      "layout": "Summary score card with category breakdown bars, confidential badge indicator, actionable counseling recommendations, and PDF export toolbar."
+    },
+    {
+      "name": "Group & Class Profile Analysis",
+      "purpose": "Aggregates class-wide responses to visualize problem rankings, severity distributions, and group comparisons.",
+      "states": {
+        "loading": "Aggregating class responses and generating rankings...",
+        "empty": "No respondents recorded for this class yet.",
+        "error": "Failed to compile group profile."
+      },
+      "layout": "Ranked horizontal bar charts per problem area, filterable by gender/category, with a class comparison selector and batch export button."
+    },
+    {
+      "name": "Audit & System Settings",
+      "purpose": "Provides complete transparency through calculation audit logs, database backups, data purging, and audit trail records.",
+      "states": {
+        "loading": "Loading audit trails and system backup status...",
+        "empty": "Audit log is currently empty.",
+        "error": "Failed to fetch audit logs."
+      },
+      "layout": "Tabbed audit log viewer with timestamped scoring steps, backup management card with export/import controls, and secure data wipe confirmation modal."
+    }
+  ],
+  "images": {
+    "auth_backdrop": {
+      "url": "https://images.unsplash.com/photo-1551288049-bebda4e38f71?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "dark": "https://images.unsplash.com/photo-1551288049-bebda4e38f71?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "alt": "Modern education analytics dashboard background"
+    },
+    "empty_state_illustration": {
+      "url": "https://images.unsplash.com/photo-1608222351212-18fe0ec7b13b?crop=entropy&cs=srgb&fm=jpg&q=85",
+      "alt": "Empty database state illustration"
+    }
+  },
+  "instructions_to_main_agent": "Implement the AUM Umum BK Mobile app using React Native, Expo Router, and TypeScript. Ensure strict adherence to safe areas, touch targets >= 44x44pt, loading/empty/error states on every screen, and sticky bottom CTAs. Utilize botanical teal palette (#0F766E) as brand primary with warm neutral surfaces. Implement the deterministic scoring engine supporting Formats 1 through 5 (75 to 265 items), Demo Mode sandbox toggle, Excel/PDF export UI simulation, and full audit logging."
+}
