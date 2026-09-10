@@ -101,3 +101,163 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+user_problem_statement: "AUM Umum BK Mobile — Guru BK app. Iterasi ini: hapus mode demo (hanya akun nyata + sesi persisten), logout, hapus (responden/kelas/sekolah dengan konfirmasi), peta nomor terpilih di hasil individual, Bulk Wizard (lembar kelas: banyak siswa, grid tap + ketik nomor), Konseling Board (status Belum/Dijadwalkan/Selesai + catatan), Tren Tahunan (per tahun ajaran), Analisis & Rekomendasi deterministik + narasi AI (gpt-5.4 via Emergent key), PDF Tabel 7/8 resmi, UI/UX baru dengan komponen terpisah."
+backend:
+  - task: "Auth tanpa demo + scoping owner_id"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Endpoint /auth/demo dihapus; semua data di-scope owner_id. Migrasi startup menghapus data mode demo."
+  - task: "DELETE respondents/classes/schools + PATCH schools"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Cascade delete, audit log delete_*, PATCH /api/schools/{id} untuk nama/tahun ajaran."
+  - task: "POST /api/respondents/bulk"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Validasi semua baris dulu (422 dengan row_errors), lalu insert semua."
+  - task: "Konseling board GET /api/konseling + PATCH /api/respondents/{id}/konseling"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Filter third_step.want_discussion == Ya; status Belum/Dijadwalkan/Selesai + note."
+  - task: "GET /api/rekap/trend"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Agregasi per academic_year responden per bidang."
+  - task: "Analysis GET /api/analysis/{scope}/{id} + POST .../ai"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "scope individual|group|school; AI gpt-5.4 via EMERGENT_LLM_KEY, cache per data_hash (verified manually OK)."
+  - task: "PDF export Tabel 7/8 + lampiran analisis"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "official_pdf() dengan header RAHASIA, tabel, blok konsultasi, analisis."
+frontend:
+  - task: "Refactor ke src/screens + UI baru, logout, sesi persisten"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/index.tsx, frontend/src/**"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Token SecureStore; logout via ConfirmSheet; 5 tab (Ringkasan, Data, Analitik, Konseling, Audit)."
+  - task: "Hapus responden/kelas/sekolah dengan ConfirmSheet"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/screens/DataView.tsx, frontend/app/index.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "testID class-delete-*, respondent-delete-*, delete-school-button, confirm-accept."
+  - task: "Bulk Wizard lembar kelas"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/screens/BulkWizardView.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "3 langkah: siswa → nomor (grid/ketik, mode berat) → tinjau & simpan."
+  - task: "Konseling Board UI"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/screens/KonselingView.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Ubah status, catatan via sheet, filter status."
+  - task: "Analitik: Kelas/Sekolah/Bandingkan/Tren + AnalysisCard + AI"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/screens/AnalysisView.tsx, AnalysisCard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Tombol analysis-ai-button-{scope} memanggil LLM (butuh ~10-20 dtk)."
+  - task: "Hasil individual: peta nomor + hapus + audit"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/screens/IndividualResultView.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "NumberGrid readOnly (result-number-map), result-delete, AnalysisCard scope individual + tombol AI."
+metadata:
+  created_by: "main_agent"
+  version: "2.0"
+  test_sequence: 1
+  run_ui: true
+test_plan:
+  current_focus:
+    - "Semua task di atas"
+  stuck_tasks: []
+  test_all: true
+  test_priority: "high_first"
+agent_communication:
+  - agent: "main"
+    message: "Mode demo dihapus — tests/test_backend.py lama yang memakai /auth/demo dan guru@aum.local harus diperbarui: gunakan register akun baru. Kredensial di /app/memory/test_credentials.md."

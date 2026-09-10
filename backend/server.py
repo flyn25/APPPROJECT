@@ -197,11 +197,9 @@ class CurrentUser(BaseModel):
     user_id: str
     name: str
     email: str
-    mode: str
 
 
 class RespondentInput(BaseModel):
-    mode: str = "demo"
     name: str
     respondent_id: str = Field(default="")
     gender: str = ""
@@ -231,6 +229,33 @@ class SchoolInput(BaseModel):
     levels: List[str] = Field(default_factory=list)
 
 
+class SchoolPatch(BaseModel):
+    name: Optional[str] = None
+    academic_year: Optional[str] = None
+
+
+class BulkRespondentItem(BaseModel):
+    name: str
+    respondent_id: str = ""
+    gender: str = ""
+    selected_problem_numbers: List[int] = Field(default_factory=list)
+    heavy_problem_numbers: List[int] = Field(default_factory=list)
+    third_step: Dict[str, Any] = Field(default_factory=dict)
+
+
+class BulkInput(BaseModel):
+    class_id: str
+    format_id: str
+    academic_year: str = ""
+    filled_date: str = ""
+    items: List[BulkRespondentItem]
+
+
+class KonselingPatch(BaseModel):
+    status: str
+    note: str = ""
+
+
 class ClassInput(BaseModel):
     school_id: str
     name: str
@@ -243,7 +268,7 @@ def format_public(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def make_token(user: Dict[str, Any]) -> str:
-    return jwt.encode({"sub": user["id"], "name": user["name"], "email": user["email"], "mode": user.get("mode", "real")}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode({"sub": user["id"], "name": user["name"], "email": user["email"]}, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 async def current_user(authorization: Optional[str] = Header(default=None)) -> CurrentUser:
@@ -251,7 +276,7 @@ async def current_user(authorization: Optional[str] = Header(default=None)) -> C
         raise HTTPException(401, "Sesi login diperlukan.")
     try:
         payload = jwt.decode(authorization.split(" ", 1)[1], JWT_SECRET, algorithms=[JWT_ALGORITHM])
-        return CurrentUser(user_id=str(payload["sub"]), name=str(payload["name"]), email=str(payload["email"]), mode=str(payload.get("mode", "real")))
+        return CurrentUser(user_id=str(payload["sub"]), name=str(payload["name"]), email=str(payload["email"]))
     except (jwt.PyJWTError, KeyError, ValueError) as error:
         logger.info("Invalid auth token: %s", error)
         raise HTTPException(401, "Sesi login tidak valid atau sudah berakhir.") from error
@@ -297,8 +322,6 @@ def score_individual(format_id: str, selected: List[int], heavy: List[int]) -> D
 
 
 async def seed_database() -> None:
-    if await db.users.count_documents({"email": "guru@aum.local"}) == 0:
-        await db.users.insert_one({"id": "demo_user", "name": "Guru BK Demo", "email": "guru@aum.local", "password_hash": bcrypt.hashpw(b"demo123", bcrypt.gensalt()).decode(), "mode": "demo", "created_at": datetime.now(timezone.utc).isoformat()})
     if await db.aum_formats.count_documents({}) == 0:
         await db.aum_formats.insert_many([{**format_public(config), "ranges": config["ranges"], "domain_counts": config["domain_counts"], "mode": "official_source"} for config in FORMATS.values()])
     if await db.aum_items.count_documents({}) == 0:
@@ -307,22 +330,13 @@ async def seed_database() -> None:
             for number, domain in config["item_mapping"].items():
                 items.append({"id": uid("item"), "format_id": config["id"], "item_number": number, "domain_code": domain["code"], "domain_name": domain["name"]})
         await db.aum_items.insert_many(items)
-    if await db.schools.count_documents({"mode": "demo"}) == 0:
-        school_id, class_a, class_b = "demo_school", "demo_class_vii_a", "demo_class_vii_b"
-        await db.schools.insert_one({"id": school_id, "mode": "demo", "owner_id": "demo_user", "name": "SMP Harapan Bangsa", "academic_year": "2025/2026", "levels": ["SLTP"]})
-        await db.classes.insert_many([
-            {"id": class_a, "mode": "demo", "owner_id": "demo_user", "school_id": school_id, "name": "VII A", "level": "SLTP", "format_id": "format_2"},
-            {"id": class_b, "mode": "demo", "owner_id": "demo_user", "school_id": school_id, "name": "VII B", "level": "SLTP", "format_id": "format_2"},
-        ])
-        demo_people = [
-            ("Nadia Putri", "P", [1, 7, 17, 42, 77, 107], [42]), ("Raka Pratama", "L", [2, 12, 22, 52, 117], [12, 52]),
-            ("Salsa Aulia", "P", [3, 8, 18, 63, 132, 152], [18]), ("Bima Aditya", "L", [4, 14, 24, 57, 122, 147], [57]),
-        ]
-        for index, (name, gender, selected, heavy) in enumerate(demo_people):
-            respondent_id = f"demo_resp_{index + 1}"
-            result = score_individual("format_2", selected, heavy)
-            await db.respondents.insert_one({"id": respondent_id, "mode": "demo", "name": name, "respondent_id": f"D-{index + 1:03}", "gender": gender, "institution": "SMP Harapan Bangsa", "class_name": "VII A" if index < 2 else "VII B", "class_id": class_a if index < 2 else class_b, "academic_year": "2025/2026", "filled_date": "2026-09-09", "format_id": "format_2", "selected_problem_numbers": selected, "heavy_problem_numbers": heavy, "third_step": {"complete": "Ya", "other_problems": "", "want_discussion": "Ya", "discussion_with": "Guru BK"}, "created_at": datetime.now(timezone.utc).isoformat()})
-            await db.processing_results.insert_one({"id": uid("result"), "mode": "demo", "respondent_id": respondent_id, "result": result, "created_at": datetime.now(timezone.utc).isoformat()})
+    # Mode demo dihapus: bersihkan data demo lama dan pastikan setiap responden punya owner_id.
+    for collection in (db.users, db.schools, db.classes, db.respondents, db.processing_results, db.audit_logs):
+        await collection.delete_many({"mode": "demo"})
+    async for person in db.respondents.find({"owner_id": {"$exists": False}}, {"_id": 0, "id": 1, "class_id": 1}):
+        cls = await db.classes.find_one({"id": person.get("class_id")}, {"_id": 0, "owner_id": 1})
+        if cls and cls.get("owner_id"):
+            await db.respondents.update_one({"id": person["id"]}, {"$set": {"owner_id": cls["owner_id"]}})
 
 
 @app.on_event("startup")
@@ -340,7 +354,7 @@ async def login(payload: LoginInput) -> Dict[str, Any]:
     user = await db.users.find_one({"email": payload.email.lower().strip()}, {"_id": 0})
     if not user or not bcrypt.checkpw(payload.password.encode(), user["password_hash"].encode()):
         raise HTTPException(401, "Email atau kata sandi belum sesuai.")
-    return {"token": make_token(user), "user": {"name": user["name"], "email": user["email"]}, "mode": user.get("mode", "real")}
+    return {"token": make_token(user), "user": {"name": user["name"], "email": user["email"]}}
 
 
 @api_router.post("/auth/register")
@@ -352,22 +366,14 @@ async def register(payload: RegisterInput) -> Dict[str, Any]:
         raise HTTPException(400, "Kata sandi minimal 8 karakter.")
     if await db.users.find_one({"email": email}, {"_id": 0}):
         raise HTTPException(409, "Email sudah terdaftar. Silakan masuk.")
-    user = {"id": uid("user"), "name": payload.name.strip(), "email": email, "password_hash": bcrypt.hashpw(payload.password.encode(), bcrypt.gensalt()).decode(), "mode": "real", "created_at": datetime.now(timezone.utc).isoformat()}
+    user = {"id": uid("user"), "name": payload.name.strip(), "email": email, "password_hash": bcrypt.hashpw(payload.password.encode(), bcrypt.gensalt()).decode(), "created_at": datetime.now(timezone.utc).isoformat()}
     await db.users.insert_one(user)
-    return {"token": make_token(user), "user": {"name": user["name"], "email": user["email"]}, "mode": "real"}
-
-
-@api_router.post("/auth/demo")
-async def demo_login() -> Dict[str, Any]:
-    user = await db.users.find_one({"email": "guru@aum.local"}, {"_id": 0})
-    if not user:
-        raise HTTPException(503, "Mode demo belum tersedia.")
-    return {"token": make_token(user), "user": {"name": user["name"], "email": user["email"]}, "mode": "demo"}
+    return {"token": make_token(user), "user": {"name": user["name"], "email": user["email"]}}
 
 
 @api_router.get("/auth/me")
 async def me(user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
-    return {"user": {"name": user.name, "email": user.email}, "mode": user.mode}
+    return {"user": {"name": user.name, "email": user.email}}
 
 
 @api_router.get("/formats")
@@ -382,10 +388,7 @@ async def format_verification() -> List[Dict[str, Any]]:
 
 @api_router.get("/schools")
 async def schools(user: CurrentUser = Depends(current_user)) -> List[Dict[str, Any]]:
-    query: Dict[str, Any] = {"mode": user.mode}
-    if user.mode == "real":
-        query["owner_id"] = user.user_id
-    return await db.schools.find(query, {"_id": 0}).to_list(100)
+    return await db.schools.find({"owner_id": user.user_id}, {"_id": 0}).to_list(100)
 
 
 @api_router.post("/schools")
@@ -394,7 +397,7 @@ async def create_school(payload: SchoolInput, user: CurrentUser = Depends(curren
         raise HTTPException(400, "Nama sekolah wajib diisi.")
     school = {
         "id": uid("school"),
-        "mode": user.mode,
+        "owner_id": user.user_id,
         "owner_id": user.user_id,
         "name": payload.name.strip(),
         "academic_year": payload.academic_year.strip() or "2025/2026",
@@ -407,7 +410,7 @@ async def create_school(payload: SchoolInput, user: CurrentUser = Depends(curren
 
 @api_router.get("/classes")
 async def classes(school_id: str, user: CurrentUser = Depends(current_user)) -> List[Dict[str, Any]]:
-    return await db.classes.find({"school_id": school_id, "mode": user.mode}, {"_id": 0}).to_list(100)
+    return await db.classes.find({"school_id": school_id, "owner_id": user.user_id}, {"_id": 0}).to_list(100)
 
 
 @api_router.post("/classes")
@@ -416,12 +419,12 @@ async def create_class(payload: ClassInput, user: CurrentUser = Depends(current_
         raise HTTPException(400, "Format AUM tidak dikenal.")
     if not payload.name.strip():
         raise HTTPException(400, "Nama kelas wajib diisi.")
-    school = await db.schools.find_one({"id": payload.school_id, "mode": user.mode}, {"_id": 0})
+    school = await db.schools.find_one({"id": payload.school_id, "owner_id": user.user_id}, {"_id": 0})
     if not school:
         raise HTTPException(404, "Sekolah tidak ditemukan.")
     doc = {
         "id": uid("class"),
-        "mode": user.mode,
+        "owner_id": user.user_id,
         "owner_id": user.user_id,
         "school_id": payload.school_id,
         "name": payload.name.strip(),
@@ -435,7 +438,7 @@ async def create_class(payload: ClassInput, user: CurrentUser = Depends(current_
 
 @api_router.get("/respondents")
 async def respondents(class_id: Optional[str] = None, user: CurrentUser = Depends(current_user)) -> List[Dict[str, Any]]:
-    query: Dict[str, Any] = {"mode": user.mode}
+    query: Dict[str, Any] = {"owner_id": user.user_id}
     if class_id:
         query["class_id"] = class_id
     return await db.respondents.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
@@ -443,7 +446,7 @@ async def respondents(class_id: Optional[str] = None, user: CurrentUser = Depend
 
 @api_router.get("/dashboard")
 async def dashboard(user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
-    people = await db.respondents.find({"mode": user.mode}, {"_id": 0, "id": 1, "selected_problem_numbers": 1, "heavy_problem_numbers": 1, "format_id": 1, "class_id": 1, "class_name": 1, "name": 1, "created_at": 1}).to_list(1000)
+    people = await db.respondents.find({"owner_id": user.user_id}, {"_id": 0, "id": 1, "selected_problem_numbers": 1, "heavy_problem_numbers": 1, "format_id": 1, "class_id": 1, "class_name": 1, "name": 1, "created_at": 1}).to_list(1000)
     total_problems = sum(len(person.get("selected_problem_numbers", [])) for person in people)
     total_heavy = sum(len(person.get("heavy_problem_numbers", [])) for person in people)
     return {"respondent_count": len(people), "class_count": len({person.get("class_id") for person in people}), "total_problems": total_problems, "total_heavy": total_heavy, "average_problems": round(total_problems / len(people), 2) if people else 0, "recent": people[:5]}
@@ -456,12 +459,12 @@ async def create_respondent(payload: RespondentInput, user: CurrentUser = Depend
     result = score_individual(payload.format_id, selected, heavy)
     respondent_id = payload.respondent_id or uid("resp")
     raw = payload.model_dump()
-    raw["mode"] = user.mode
-    raw.update({"id": respondent_id, "selected_problem_numbers": selected, "heavy_problem_numbers": heavy, "created_at": datetime.now(timezone.utc).isoformat()})
+    raw["owner_id"] = user.user_id
+    raw.update({"id": respondent_id, "selected_problem_numbers": selected, "heavy_problem_numbers": heavy, "konseling_status": "Belum", "created_at": datetime.now(timezone.utc).isoformat()})
     await db.respondents.insert_one(raw)
     result_id = uid("result")
-    await db.processing_results.insert_one({"id": result_id, "mode": user.mode, "respondent_id": respondent_id, "result": result, "created_at": datetime.now(timezone.utc).isoformat()})
-    await db.audit_logs.insert_one({"id": uid("audit"), "mode": user.mode, "action": "score_individual", "respondent_id": respondent_id, "details": result["audit"], "created_at": datetime.now(timezone.utc).isoformat()})
+    await db.processing_results.insert_one({"id": result_id, "owner_id": user.user_id, "respondent_id": respondent_id, "result": result, "created_at": datetime.now(timezone.utc).isoformat()})
+    await db.audit_logs.insert_one({"id": uid("audit"), "owner_id": user.user_id, "action": "score_individual", "respondent_id": respondent_id, "details": result["audit"], "created_at": datetime.now(timezone.utc).isoformat()})
     return {"respondent": {**raw, "_id": None}, "result_id": result_id, "result": result}
 
 
@@ -472,7 +475,7 @@ async def scoring_individual(payload: RespondentInput, user: CurrentUser = Depen
 
 @api_router.post("/scoring/group")
 async def scoring_group(payload: GroupInput, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
-    query: Dict[str, Any] = {"format_id": payload.format_id, "mode": user.mode}
+    query: Dict[str, Any] = {"format_id": payload.format_id, "owner_id": user.user_id}
     if payload.respondent_ids:
         query["id"] = {"$in": payload.respondent_ids}
     elif payload.class_id:
@@ -490,12 +493,12 @@ async def scoring_group(payload: GroupInput, user: CurrentUser = Depends(current
         rows.append({"domain_code": domain["code"], "domain_name": domain["name"], "lowest": min(row["count"] for row in domain_rows), "highest": max(row["count"] for row in domain_rows), "total": total, "percentage": round((total / domain["item_count"] / len(people)) * 100, 2), "average": round(total / len(people), 2), "heavy_total": heavy_total, "heavy_average": round(heavy_total / len(people), 2)})
     total = sum(len(person.get("selected_problem_numbers", [])) for person in people)
     heavy_total = sum(len(person.get("heavy_problem_numbers", [])) for person in people)
-    return {"format_id": payload.format_id, "respondent_count": len(people), "total_problems": total, "average_problems": round(total / len(people), 2), "total_heavy_problems": heavy_total, "average_heavy_problems": round(heavy_total / len(people), 2), "rows": rows, "contributors": [{"id": person["id"], "name": person["name"], "total": len(person.get("selected_problem_numbers", [])), "heavy_total": len(person.get("heavy_problem_numbers", []))} for person in people], "audit": {"formula": "persentase kelompok = JML / jumlah item bidang / jumlah pengisi AUM × 100", "respondent_count": len(people)}}
+    return {"format_id": payload.format_id, "respondent_count": len(people), "total_problems": total, "average_problems": round(total / len(people), 2), "total_heavy_problems": heavy_total, "average_heavy_problems": round(heavy_total / len(people), 2), "rows": rows, "contributors": [{"id": person["id"], "name": person["name"], "total": len(person.get("selected_problem_numbers", [])), "heavy_total": len(person.get("heavy_problem_numbers", []))} for person in people], "consultation": consult_counts(people), "audit": {"formula": "persentase kelompok = JML / jumlah item bidang / jumlah pengisi AUM × 100", "respondent_count": len(people)}}
 
 
 @api_router.get("/results/individual/{respondent_id}")
 async def individual_result(respondent_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
-    person = await db.respondents.find_one({"id": respondent_id, "mode": user.mode}, {"_id": 0})
+    person = await db.respondents.find_one({"id": respondent_id, "owner_id": user.user_id}, {"_id": 0})
     if not person:
         raise HTTPException(404, "Responden tidak ditemukan.")
     return {"respondent": person, "result": score_individual(person["format_id"], person.get("selected_problem_numbers", []), person.get("heavy_problem_numbers", []))}
@@ -503,16 +506,16 @@ async def individual_result(respondent_id: str, user: CurrentUser = Depends(curr
 
 @api_router.get("/audit")
 async def audit(user: CurrentUser = Depends(current_user)) -> List[Dict[str, Any]]:
-    return await db.audit_logs.find({"mode": user.mode}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return await db.audit_logs.find({"owner_id": user.user_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
 
 
 @api_router.get("/rekap/school/{school_id}")
 async def rekap_school(school_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
-    school = await db.schools.find_one({"id": school_id, "mode": user.mode}, {"_id": 0})
+    school = await db.schools.find_one({"id": school_id, "owner_id": user.user_id}, {"_id": 0})
     if not school:
         raise HTTPException(404, "Sekolah tidak ditemukan.")
-    class_list = await db.classes.find({"school_id": school_id, "mode": user.mode}, {"_id": 0}).to_list(200)
-    people = await db.respondents.find({"class_id": {"$in": [c["id"] for c in class_list]}, "mode": user.mode}, {"_id": 0}).to_list(2000)
+    class_list = await db.classes.find({"school_id": school_id, "owner_id": user.user_id}, {"_id": 0}).to_list(200)
+    people = await db.respondents.find({"class_id": {"$in": [c["id"] for c in class_list]}, "owner_id": user.user_id}, {"_id": 0}).to_list(2000)
     total_problems = sum(len(p.get("selected_problem_numbers", [])) for p in people)
     total_heavy = sum(len(p.get("heavy_problem_numbers", [])) for p in people)
     # per-domain aggregation across all classes/formats in the school
@@ -558,10 +561,10 @@ async def rekap_school(school_id: str, user: CurrentUser = Depends(current_user)
 
 @api_router.get("/rekap/comparison")
 async def rekap_comparison(school_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
-    class_list = await db.classes.find({"school_id": school_id, "mode": user.mode}, {"_id": 0}).to_list(200)
+    class_list = await db.classes.find({"school_id": school_id, "owner_id": user.user_id}, {"_id": 0}).to_list(200)
     if not class_list:
         return {"classes": [], "domains": []}
-    people = await db.respondents.find({"class_id": {"$in": [c["id"] for c in class_list]}, "mode": user.mode}, {"_id": 0}).to_list(2000)
+    people = await db.respondents.find({"class_id": {"$in": [c["id"] for c in class_list]}, "owner_id": user.user_id}, {"_id": 0}).to_list(2000)
     # collect all domain codes present in classes' formats
     domain_codes: List[str] = []
     seen = set()
@@ -590,9 +593,170 @@ async def rekap_comparison(school_id: str, user: CurrentUser = Depends(current_u
     return {"classes": [{"id": c["id"], "name": c["name"], "level": c["level"], "format_id": c["format_id"]} for c in class_list], "domains": matrix}
 
 
+@api_router.get("/rekap/trend")
+async def rekap_trend(school_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    """Tren tahunan: agregasi per tahun ajaran (per bidang) untuk satu sekolah."""
+    class_list = await db.classes.find({"school_id": school_id, "owner_id": user.user_id}, {"_id": 0}).to_list(200)
+    people = await db.respondents.find({"class_id": {"$in": [c["id"] for c in class_list]}, "owner_id": user.user_id}, {"_id": 0}).to_list(5000)
+    years: Dict[str, Dict[str, Any]] = {}
+    for person in people:
+        year = str(person.get("academic_year") or "Tanpa tahun")
+        slot = years.setdefault(year, {"academic_year": year, "respondent_count": 0, "total_problems": 0, "total_heavy": 0, "domains": {}})
+        slot["respondent_count"] += 1
+        config = FORMATS.get(person.get("format_id"))
+        if not config:
+            continue
+        mapping = config["item_mapping"]
+        for number in person.get("selected_problem_numbers", []):
+            code = mapping.get(number, {}).get("code")
+            if code:
+                slot["total_problems"] += 1
+                slot["domains"].setdefault(code, {"total": 0, "heavy": 0})["total"] += 1
+        for number in person.get("heavy_problem_numbers", []):
+            code = mapping.get(number, {}).get("code")
+            if code:
+                slot["total_heavy"] += 1
+                slot["domains"].setdefault(code, {"total": 0, "heavy": 0})["heavy"] += 1
+    ordered_years = sorted(years.keys())
+    domain_codes = [code for code in DOMAIN_NAMES if any(code in years[y]["domains"] for y in ordered_years)]
+    series = []
+    for code in domain_codes:
+        points = []
+        for year in ordered_years:
+            slot = years[year]
+            total = slot["domains"].get(code, {}).get("total", 0)
+            points.append({"academic_year": year, "total": total, "heavy": slot["domains"].get(code, {}).get("heavy", 0), "average": round(total / slot["respondent_count"], 2) if slot["respondent_count"] else 0})
+        series.append({"code": code, "name": DOMAIN_NAMES[code], "points": points})
+    return {
+        "years": [{"academic_year": y, "respondent_count": years[y]["respondent_count"], "total_problems": years[y]["total_problems"], "total_heavy": years[y]["total_heavy"], "average_problems": round(years[y]["total_problems"] / years[y]["respondent_count"], 2) if years[y]["respondent_count"] else 0} for y in ordered_years],
+        "series": series,
+        "audit": {"formula": "tren = agregat masalah per bidang dikelompokkan menurut tahun ajaran responden; rata-rata = total / jumlah responden tahun tsb"},
+    }
+
+
+@api_router.patch("/schools/{school_id}")
+async def update_school(school_id: str, payload: SchoolPatch, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    updates = {key: value.strip() for key, value in payload.model_dump().items() if value is not None and value.strip()}
+    if not updates:
+        raise HTTPException(400, "Tidak ada perubahan.")
+    result = await db.schools.find_one_and_update({"id": school_id, "owner_id": user.user_id}, {"$set": updates}, projection={"_id": 0}, return_document=True)
+    if not result:
+        raise HTTPException(404, "Sekolah tidak ditemukan.")
+    return result
+
+
+async def delete_respondent_docs(respondent_ids: List[str], user: CurrentUser) -> int:
+    if not respondent_ids:
+        return 0
+    deleted = await db.respondents.delete_many({"id": {"$in": respondent_ids}, "owner_id": user.user_id})
+    await db.processing_results.delete_many({"respondent_id": {"$in": respondent_ids}})
+    return deleted.deleted_count
+
+
+@api_router.delete("/respondents/{respondent_id}")
+async def delete_respondent(respondent_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    person = await db.respondents.find_one({"id": respondent_id, "owner_id": user.user_id}, {"_id": 0, "name": 1})
+    if not person:
+        raise HTTPException(404, "Responden tidak ditemukan.")
+    await delete_respondent_docs([respondent_id], user)
+    await db.audit_logs.insert_one({"id": uid("audit"), "owner_id": user.user_id, "action": "delete_respondent", "respondent_id": respondent_id, "details": {"formula": f"Hapus responden {person['name']} beserta hasil olahannya"}, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"deleted": 1}
+
+
+@api_router.delete("/classes/{class_id}")
+async def delete_class(class_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    cls = await db.classes.find_one({"id": class_id, "owner_id": user.user_id}, {"_id": 0})
+    if not cls:
+        raise HTTPException(404, "Kelas tidak ditemukan.")
+    ids = [p["id"] async for p in db.respondents.find({"class_id": class_id, "owner_id": user.user_id}, {"_id": 0, "id": 1})]
+    removed = await delete_respondent_docs(ids, user)
+    await db.classes.delete_one({"id": class_id, "owner_id": user.user_id})
+    await db.audit_logs.insert_one({"id": uid("audit"), "owner_id": user.user_id, "action": "delete_class", "details": {"formula": f"Hapus kelas {cls['name']} beserta {removed} responden"}, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"deleted_class": 1, "deleted_respondents": removed}
+
+
+@api_router.delete("/schools/{school_id}")
+async def delete_school(school_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    school = await db.schools.find_one({"id": school_id, "owner_id": user.user_id}, {"_id": 0})
+    if not school:
+        raise HTTPException(404, "Sekolah tidak ditemukan.")
+    class_ids = [c["id"] async for c in db.classes.find({"school_id": school_id, "owner_id": user.user_id}, {"_id": 0, "id": 1})]
+    ids = [p["id"] async for p in db.respondents.find({"class_id": {"$in": class_ids}, "owner_id": user.user_id}, {"_id": 0, "id": 1})]
+    removed = await delete_respondent_docs(ids, user)
+    await db.classes.delete_many({"school_id": school_id, "owner_id": user.user_id})
+    await db.schools.delete_one({"id": school_id, "owner_id": user.user_id})
+    await db.audit_logs.insert_one({"id": uid("audit"), "owner_id": user.user_id, "action": "delete_school", "details": {"formula": f"Hapus sekolah {school['name']}: {len(class_ids)} kelas, {removed} responden"}, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"deleted_school": 1, "deleted_classes": len(class_ids), "deleted_respondents": removed}
+
+
+@api_router.post("/respondents/bulk")
+async def create_respondents_bulk(payload: BulkInput, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    cls = await db.classes.find_one({"id": payload.class_id, "owner_id": user.user_id}, {"_id": 0})
+    if not cls:
+        raise HTTPException(404, "Kelas tidak ditemukan.")
+    if payload.format_id not in FORMATS:
+        raise HTTPException(400, "Format AUM tidak ditemukan.")
+    if not payload.items:
+        raise HTTPException(400, "Belum ada responden pada lembar kelas.")
+    school = await db.schools.find_one({"id": cls["school_id"], "owner_id": user.user_id}, {"_id": 0})
+    now = datetime.now(timezone.utc).isoformat()
+    docs: List[Dict[str, Any]] = []
+    results: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    for index, item in enumerate(payload.items, start=1):
+        selected = sorted(set(item.selected_problem_numbers))
+        heavy = sorted(set(item.heavy_problem_numbers))
+        if not item.name.strip():
+            errors.append({"row": index, "message": "Nama responden kosong."})
+            continue
+        if not selected:
+            errors.append({"row": index, "name": item.name, "message": "Belum ada nomor masalah."})
+            continue
+        try:
+            result = score_individual(payload.format_id, selected, heavy)
+        except HTTPException as error:
+            errors.append({"row": index, "name": item.name, "message": str(error.detail)})
+            continue
+        respondent_id = item.respondent_id.strip() or uid("resp")
+        docs.append({"id": respondent_id, "owner_id": user.user_id, "name": item.name.strip(), "respondent_id": item.respondent_id.strip(), "gender": item.gender, "institution": school["name"] if school else "", "class_name": cls["name"], "class_id": cls["id"], "academic_year": payload.academic_year or (school or {}).get("academic_year", "2025/2026"), "filled_date": payload.filled_date or now[:10], "format_id": payload.format_id, "selected_problem_numbers": selected, "heavy_problem_numbers": heavy, "third_step": item.third_step, "konseling_status": "Belum", "created_at": now})
+        results.append({"id": uid("result"), "owner_id": user.user_id, "respondent_id": respondent_id, "result": result, "created_at": now})
+    if errors:
+        raise HTTPException(422, {"message": "Lembar kelas belum tersimpan karena ada baris yang belum valid.", "row_errors": errors})
+    await db.respondents.insert_many(docs)
+    await db.processing_results.insert_many(results)
+    await db.audit_logs.insert_one({"id": uid("audit"), "owner_id": user.user_id, "action": "bulk_score", "details": {"formula": f"Lembar kelas {cls['name']}: {len(docs)} responden dihitung deterministik", "rows": len(docs)}, "created_at": now})
+    return {"saved": len(docs), "class_id": cls["id"]}
+
+
+@api_router.get("/konseling")
+async def konseling_board(school_id: Optional[str] = None, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    query: Dict[str, Any] = {"owner_id": user.user_id, "third_step.want_discussion": "Ya"}
+    if school_id:
+        class_ids = [c["id"] async for c in db.classes.find({"school_id": school_id, "owner_id": user.user_id}, {"_id": 0, "id": 1})]
+        query["class_id"] = {"$in": class_ids}
+    people = await db.respondents.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    items = []
+    for person in people:
+        items.append({"id": person["id"], "name": person["name"], "respondent_id": person.get("respondent_id", ""), "class_name": person.get("class_name", ""), "class_id": person.get("class_id", ""), "academic_year": person.get("academic_year", ""), "total_problems": len(person.get("selected_problem_numbers", [])), "total_heavy": len(person.get("heavy_problem_numbers", [])), "discussion_with": (person.get("third_step") or {}).get("discussion_with", ""), "other_problems": (person.get("third_step") or {}).get("other_problems", ""), "status": person.get("konseling_status", "Belum"), "note": person.get("konseling_note", ""), "created_at": person.get("created_at", "")})
+    counts = {"Belum": 0, "Dijadwalkan": 0, "Selesai": 0}
+    for item in items:
+        counts[item["status"]] = counts.get(item["status"], 0) + 1
+    return {"items": items, "counts": counts}
+
+
+@api_router.patch("/respondents/{respondent_id}/konseling")
+async def update_konseling(respondent_id: str, payload: KonselingPatch, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    if payload.status not in {"Belum", "Dijadwalkan", "Selesai"}:
+        raise HTTPException(400, "Status konseling tidak dikenal.")
+    result = await db.respondents.update_one({"id": respondent_id, "owner_id": user.user_id}, {"$set": {"konseling_status": payload.status, "konseling_note": payload.note.strip(), "konseling_updated_at": datetime.now(timezone.utc).isoformat()}})
+    if not result.matched_count:
+        raise HTTPException(404, "Responden tidak ditemukan.")
+    return {"id": respondent_id, "status": payload.status, "note": payload.note.strip()}
+
+
 @api_router.get("/audit/individual/{respondent_id}")
 async def audit_individual(respondent_id: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
-    person = await db.respondents.find_one({"id": respondent_id, "mode": user.mode}, {"_id": 0})
+    person = await db.respondents.find_one({"id": respondent_id, "owner_id": user.user_id}, {"_id": 0})
     if not person:
         raise HTTPException(404, "Responden tidak ditemukan.")
     result = score_individual(person["format_id"], person.get("selected_problem_numbers", []), person.get("heavy_problem_numbers", []))
@@ -676,7 +840,7 @@ async def import_excel(file: UploadFile = File(...), user: CurrentUser = Depends
             errors.append({"row": row_number, "message": " ".join(row_errors)})
             continue
         selected_class = str(row_value(row, ["kelas", "class", "kelompok"])).strip()
-        raw_rows.append({"id": uid("resp"), "mode": user.mode, "name": name, "respondent_id": str(row_value(row, ["id", "nis", "nisn", "nim"])).strip(), "gender": str(row_value(row, ["jeniskelamin", "gender"])).strip(), "institution": str(row_value(row, ["sekolah", "lembaga", "institution"])).strip(), "class_name": selected_class, "class_id": str(row_value(row, ["classid"])).strip(), "format_id": format_id, "academic_year": str(row_value(row, ["tahunajaran", "academicyear"], "2025/2026")), "filled_date": str(row_value(row, ["tanggal", "tanggalmengisi", "filleddate"])).strip(), "selected_problem_numbers": selected, "heavy_problem_numbers": heavy, "third_step": {}, "created_at": datetime.now(timezone.utc).isoformat()})
+        raw_rows.append({"id": uid("resp"), "owner_id": user.user_id, "name": name, "respondent_id": str(row_value(row, ["id", "nis", "nisn", "nim"])).strip(), "gender": str(row_value(row, ["jeniskelamin", "gender"])).strip(), "institution": str(row_value(row, ["sekolah", "lembaga", "institution"])).strip(), "class_name": selected_class, "class_id": str(row_value(row, ["classid"])).strip(), "format_id": format_id, "academic_year": str(row_value(row, ["tahunajaran", "academicyear"], "2025/2026")), "filled_date": str(row_value(row, ["tanggal", "tanggalmengisi", "filleddate"])).strip(), "selected_problem_numbers": selected, "heavy_problem_numbers": heavy, "third_step": {}, "created_at": datetime.now(timezone.utc).isoformat()})
     if errors:
         raise HTTPException(422, {"message": "Tidak ada data yang diimport karena terdapat kesalahan validasi.", "row_errors": errors})
     inserted_ids = [row["id"] for row in raw_rows]
@@ -684,11 +848,11 @@ async def import_excel(file: UploadFile = File(...), user: CurrentUser = Depends
         await db.respondents.insert_many(raw_rows, ordered=True)
         result_docs = []
         for raw in raw_rows:
-            result_docs.append({"id": uid("result"), "mode": user.mode, "respondent_id": raw["id"], "result": score_individual(raw["format_id"], raw["selected_problem_numbers"], raw["heavy_problem_numbers"]), "created_at": datetime.now(timezone.utc).isoformat()})
+            result_docs.append({"id": uid("result"), "owner_id": user.user_id, "respondent_id": raw["id"], "result": score_individual(raw["format_id"], raw["selected_problem_numbers"], raw["heavy_problem_numbers"]), "created_at": datetime.now(timezone.utc).isoformat()})
         await db.processing_results.insert_many(result_docs, ordered=True)
-        await db.audit_logs.insert_one({"id": uid("audit"), "mode": user.mode, "action": "import_excel", "details": {"rows": len(raw_rows), "transactional": True}, "created_at": datetime.now(timezone.utc).isoformat()})
+        await db.audit_logs.insert_one({"id": uid("audit"), "owner_id": user.user_id, "action": "import_excel", "details": {"rows": len(raw_rows), "transactional": True}, "created_at": datetime.now(timezone.utc).isoformat()})
     except Exception as error:
-        await db.respondents.delete_many({"id": {"$in": inserted_ids}, "mode": user.mode})
+        await db.respondents.delete_many({"id": {"$in": inserted_ids}, "owner_id": user.user_id})
         raise HTTPException(500, "Import dibatalkan seluruhnya karena penyimpanan tidak selesai.") from error
     return {"imported": len(raw_rows), "rejected": 0, "transactional": True}
 
@@ -702,22 +866,299 @@ def xlsx_response(rows: List[Dict[str, Any]], filename: str) -> StreamingRespons
     return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
-def pdf_response(title: str, lines: List[str], filename: str) -> Response:
+CONSULT_TARGETS = ["Guru BK", "Teman", "Guru lain", "Orangtua", "Ahli lain", "Lain-lain"]
+
+
+def intensity_label(percentage: float) -> str:
+    """Label prioritas layanan (bukan diagnosis): ambang tetap & transparan."""
+    if percentage >= 50:
+        return "sangat perlu perhatian"
+    if percentage >= 25:
+        return "perlu perhatian"
+    if percentage > 0:
+        return "perlu dipantau"
+    return "tidak ada masalah terungkap"
+
+
+def group_label(percentage: float) -> str:
+    if percentage >= 25:
+        return "dirasakan mayoritas siswa"
+    if percentage >= 10:
+        return "dirasakan sebagian siswa"
+    if percentage > 0:
+        return "dirasakan sebagian kecil siswa"
+    return "tidak ada masalah terungkap"
+
+
+ANALYSIS_RULES = [
+    "Bidang diurutkan menurut persentase masalah (JML / jumlah item bidang × 100).",
+    "Label prioritas: ≥50% sangat perlu perhatian; 25–49% perlu perhatian; 1–24% perlu dipantau.",
+    "Individual: ada masalah berat atau bidang ≥50% → konseling individual; bidang 25–49% → bimbingan kelompok; lainnya → layanan informasi/klasikal.",
+    "Kelompok: persentase kelompok ≥25% → layanan klasikal; 10–24% → bimbingan kelompok; siswa dengan masalah berat terbanyak → kandidat konseling individual.",
+    "Analisis bersifat deskriptif untuk pertimbangan Guru BK, bukan diagnosis psikologis.",
+]
+
+
+def analyze_individual(person: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
+    rows = sorted(result["rows"], key=lambda r: (r["percentage"], r["count"]), reverse=True)
+    active = [r for r in rows if r["count"] > 0]
+    step = person.get("third_step") or {}
+    highlights: List[str] = []
+    recommendations: List[str] = []
+    priorities = [{"code": r["domain_code"], "name": r["domain_name"], "count": r["count"], "percentage": r["percentage"], "label": intensity_label(r["percentage"]), "heavy": r["heavy_problem_numbers"]} for r in active[:3]]
+    if not active:
+        highlights.append("Tidak ada nomor masalah yang dipilih pada seluruh bidang.")
+        recommendations.append("Lakukan konfirmasi ulang pengisian AUM; pertimbangkan wawancara singkat untuk memastikan kondisi responden.")
+    else:
+        top = active[0]
+        highlights.append(f"Bidang dominan: {top['domain_name']} ({top['domain_code']}) dengan {top['count']} masalah ({top['percentage']}% dari {top['item_count']} item) — {intensity_label(top['percentage'])}.")
+        if len(active) > 1:
+            highlights.append("Urutan prioritas: " + " → ".join(f"{r['domain_code']} {r['percentage']}%" for r in active[:5]) + ".")
+        heavy_total = result["total_heavy_problems"]
+        if heavy_total:
+            heavy_desc = "; ".join(f"{r['domain_code']}: {', '.join(str(n).zfill(3) for n in r['heavy_problem_numbers'])}" for r in rows if r["heavy_problem_numbers"])
+            highlights.append(f"{heavy_total} masalah dirasakan berat ({heavy_desc}).")
+            recommendations.append(f"Konseling individual diprioritaskan untuk membahas masalah berat pada bidang {', '.join(r['domain_code'] for r in rows if r['heavy_problem_numbers'])}.")
+        elif top["percentage"] >= 50:
+            recommendations.append(f"Konseling individual disarankan karena bidang {top['domain_code']} mencapai {top['percentage']}%.")
+        group_targets = [r["domain_code"] for r in active if 25 <= r["percentage"] < 50]
+        if group_targets:
+            recommendations.append(f"Bimbingan kelompok bertema {', '.join(group_targets)} bersama siswa lain yang memiliki pola serupa.")
+        watch = [r["domain_code"] for r in active if 0 < r["percentage"] < 25]
+        if watch:
+            recommendations.append(f"Layanan informasi/klasikal dan pemantauan untuk bidang {', '.join(watch)}.")
+    if str(step.get("want_discussion", "")).lower() == "ya":
+        recommendations.append(f"Responden menyatakan ingin membicarakan masalah kepada {step.get('discussion_with') or 'Guru BK'} — jadwalkan tindak lanjut melalui Papan Konseling.")
+    if str(step.get("complete", "")).lower() == "tidak":
+        highlights.append("Responden menyatakan daftar masalah belum menggambarkan keseluruhan; ada masalah lain yang perlu digali.")
+    if step.get("other_problems"):
+        highlights.append(f"Masalah lain yang dituliskan: \"{step['other_problems']}\".")
+    return {"scope": "individual", "summary": highlights[0] if highlights else "", "highlights": highlights, "priorities": priorities, "recommendations": recommendations, "rules": ANALYSIS_RULES}
+
+
+def analyze_group(group: Dict[str, Any], people: List[Dict[str, Any]], class_name: str) -> Dict[str, Any]:
+    rows = sorted(group["rows"], key=lambda r: (r["percentage"], r["total"]), reverse=True)
+    active = [r for r in rows if r["total"] > 0]
+    n = group["respondent_count"]
+    highlights: List[str] = []
+    recommendations: List[str] = []
+    priorities = [{"code": r["domain_code"], "name": r["domain_name"], "count": r["total"], "percentage": r["percentage"], "average": r["average"], "label": group_label(r["percentage"]), "heavy": r["heavy_total"]} for r in active[:3]]
+    if not active:
+        highlights.append("Belum ada masalah yang terungkap pada kelompok ini.")
+    else:
+        top = active[0]
+        highlights.append(f"Bidang dominan kelompok {class_name}: {top['domain_name']} ({top['domain_code']}) — {top['total']} masalah, rata-rata {top['average']} per siswa ({top['percentage']}%).")
+        highlights.append(f"Rata-rata {group['average_problems']} masalah per siswa dan {group['average_heavy_problems']} masalah berat per siswa dari {n} responden.")
+        spread = [r for r in active if r["highest"] - r["lowest"] >= 5]
+        if spread:
+            highlights.append("Sebaran lebar (perbedaan siswa besar) pada bidang " + ", ".join(f"{r['domain_code']} ({r['lowest']}–{r['highest']})" for r in spread[:4]) + ".")
+        klasikal = [r["domain_code"] for r in active if r["percentage"] >= 25]
+        kelompok = [r["domain_code"] for r in active if 10 <= r["percentage"] < 25]
+        if klasikal:
+            recommendations.append(f"Layanan klasikal untuk seluruh kelas bertema {', '.join(klasikal)} karena masalah dirasakan mayoritas siswa.")
+        if kelompok:
+            recommendations.append(f"Bimbingan kelompok bagi siswa yang memilih masalah pada bidang {', '.join(kelompok)}.")
+        heavy_people = sorted([p for p in people if p.get("heavy_problem_numbers")], key=lambda p: (len(p.get("heavy_problem_numbers", [])), len(p.get("selected_problem_numbers", []))), reverse=True)[:5]
+        if heavy_people:
+            recommendations.append("Kandidat konseling individual (masalah berat terbanyak): " + ", ".join(f"{p['name']} ({len(p.get('heavy_problem_numbers', []))} berat)" for p in heavy_people) + ".")
+    consult = group.get("consultation") or consult_counts(people)
+    wanting = sum(consult.values())
+    if wanting:
+        highlights.append(f"{wanting} siswa ingin mengkonsultasikan masalah (" + ", ".join(f"{k} {v}" for k, v in consult.items() if v) + ").")
+        recommendations.append("Tindak lanjuti permintaan konsultasi melalui Papan Konseling dan koordinasikan dengan pihak yang diminta siswa.")
+    return {"scope": "group", "summary": highlights[0] if highlights else "", "highlights": highlights, "priorities": priorities, "recommendations": recommendations, "rules": ANALYSIS_RULES}
+
+
+def analyze_school(rekap: Dict[str, Any]) -> Dict[str, Any]:
+    rows = rekap["domain_rows"]
+    n = rekap["respondent_count"]
+    highlights: List[str] = []
+    recommendations: List[str] = []
+    priorities = [{"code": r["code"], "name": r["name"], "count": r["total"], "percentage": round(r["total"] / n, 2) if n else 0, "label": "rata-rata per siswa", "heavy": r["heavy"]} for r in rows[:3]]
+    if not rows or not n:
+        highlights.append("Belum ada data responden pada sekolah ini.")
+    else:
+        top = rows[0]
+        highlights.append(f"Bidang dominan sekolah {rekap['school']['name']}: {top['name']} ({top['code']}) — {top['total']} masalah dari {n} responden ({top['heavy']} berat).")
+        highlights.append("Urutan bidang: " + " → ".join(f"{r['code']} {r['total']}" for r in rows[:5]) + ".")
+        classes = sorted([c for c in rekap["class_summary"] if c["respondent_count"]], key=lambda c: c["average_problems"], reverse=True)
+        if classes:
+            highlights.append(f"Kelas dengan rata-rata masalah tertinggi: {classes[0]['name']} ({classes[0]['average_problems']} per siswa); terendah: {classes[-1]['name']} ({classes[-1]['average_problems']}).")
+            recommendations.append(f"Prioritaskan program layanan di kelas {classes[0]['name']} dan susun layanan klasikal lintas kelas bertema {top['code']}.")
+        heavy_rows = [r for r in rows if r["heavy"]]
+        if heavy_rows:
+            recommendations.append("Siapkan jadwal konseling individual untuk masalah berat terbanyak pada bidang " + ", ".join(r["code"] for r in heavy_rows[:3]) + ".")
+        recommendations.append("Gunakan tab Tren untuk membandingkan profil ini dengan tahun ajaran sebelumnya.")
+    return {"scope": "school", "summary": highlights[0] if highlights else "", "highlights": highlights, "priorities": priorities, "recommendations": recommendations, "rules": ANALYSIS_RULES}
+
+
+async def build_analysis(scope: str, identifier: str, user: CurrentUser) -> Dict[str, Any]:
+    if scope == "individual":
+        person = await db.respondents.find_one({"id": identifier, "owner_id": user.user_id}, {"_id": 0})
+        if not person:
+            raise HTTPException(404, "Responden tidak ditemukan.")
+        result = score_individual(person["format_id"], person.get("selected_problem_numbers", []), person.get("heavy_problem_numbers", []))
+        analysis = analyze_individual(person, result)
+        analysis["title"] = f"{person['name']} · {person.get('class_name') or ''}"
+        return analysis
+    if scope == "group":
+        cls = await db.classes.find_one({"id": identifier, "owner_id": user.user_id}, {"_id": 0})
+        people = await db.respondents.find({"class_id": identifier, "owner_id": user.user_id}, {"_id": 0}).to_list(1000)
+        if not people:
+            raise HTTPException(404, "Belum ada responden pada kelompok ini.")
+        group = await scoring_group(GroupInput(format_id=people[0]["format_id"], class_id=identifier), user)
+        analysis = analyze_group(group, people, (cls or {}).get("name") or people[0].get("class_name", ""))
+        analysis["title"] = f"Kelas {(cls or {}).get('name') or ''}"
+        return analysis
+    if scope == "school":
+        rekap = await rekap_school(identifier, user)
+        analysis = analyze_school(rekap)
+        analysis["title"] = rekap["school"]["name"]
+        return analysis
+    raise HTTPException(400, "Jenis analisis tidak dikenal.")
+
+
+@api_router.get("/analysis/{scope}/{identifier}")
+async def analysis_endpoint(scope: str, identifier: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    analysis = await build_analysis(scope, identifier, user)
+    cached = await db.ai_analyses.find_one({"owner_id": user.user_id, "scope": scope, "identifier": identifier}, {"_id": 0})
+    analysis["ai_narrative"] = cached["narrative"] if cached and cached.get("data_hash") == analysis_hash(analysis) else ""
+    return analysis
+
+
+def analysis_hash(analysis: Dict[str, Any]) -> str:
+    import hashlib
+    import json
+    return hashlib.sha1(json.dumps({"h": analysis["highlights"], "p": analysis["priorities"]}, sort_keys=True, default=str).encode()).hexdigest()
+
+
+@api_router.post("/analysis/{scope}/{identifier}/ai")
+async def analysis_ai(scope: str, identifier: str, user: CurrentUser = Depends(current_user)) -> Dict[str, Any]:
+    analysis = await build_analysis(scope, identifier, user)
+    data_hash = analysis_hash(analysis)
+    cached = await db.ai_analyses.find_one({"owner_id": user.user_id, "scope": scope, "identifier": identifier, "data_hash": data_hash}, {"_id": 0})
+    if cached:
+        return {"narrative": cached["narrative"], "cached": True}
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(503, "Kunci AI belum dikonfigurasi.")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    system_message = (
+        "Anda asisten Guru BK di Indonesia. Tulis narasi interpretasi hasil AUM Umum secara deskriptif, hangat, dan profesional dalam Bahasa Indonesia. "
+        "DILARANG membuat diagnosis psikologis, label gangguan, atau kategori klinis. Fokus pada pola kebutuhan layanan dan saran tindak lanjut BK "
+        "(layanan klasikal, bimbingan kelompok, konseling individual, kolaborasi orang tua/guru). Maksimal 170 kata: 1 paragraf interpretasi lalu 3 poin rekomendasi diawali tanda '-'. "
+        "Gunakan hanya data yang diberikan; jangan mengarang angka."
+    )
+    prompt = f"Judul: {analysis.get('title', '')}\nTemuan deterministik:\n- " + "\n- ".join(analysis["highlights"]) + "\nPrioritas bidang: " + "; ".join(f"{p['code']} ({p['name']}) {p['percentage']}% {p['label']}" for p in analysis["priorities"]) + "\nRekomendasi aturan:\n- " + "\n- ".join(analysis["recommendations"] or ["-"])
+    try:
+        chat = LlmChat(api_key=api_key, session_id=f"aum-{user.user_id}-{scope}-{identifier}-{data_hash[:8]}", system_message=system_message).with_model("openai", "gpt-5.4")
+        narrative = await chat.send_message(UserMessage(text=prompt))
+    except Exception as error:
+        logger.warning("AI analysis failed: %s", error)
+        raise HTTPException(502, "Narasi AI belum dapat dibuat saat ini. Analisis deterministik tetap tersedia.") from error
+    narrative = str(narrative).strip()
+    await db.ai_analyses.update_one({"owner_id": user.user_id, "scope": scope, "identifier": identifier}, {"$set": {"narrative": narrative, "data_hash": data_hash, "model": "gpt-5.4", "created_at": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    await db.audit_logs.insert_one({"id": uid("audit"), "owner_id": user.user_id, "action": "ai_analysis", "details": {"formula": f"Narasi AI ({scope}) dibuat dari temuan deterministik; tidak mengubah skor"}, "created_at": datetime.now(timezone.utc).isoformat()})
+    return {"narrative": narrative, "cached": False}
+
+
+async def cached_narrative(scope: str, identifier: str, user: CurrentUser) -> str:
+    cached = await db.ai_analyses.find_one({"owner_id": user.user_id, "scope": scope, "identifier": identifier}, {"_id": 0, "narrative": 1})
+    return (cached or {}).get("narrative", "")
+
+
+def analysis_lines(analysis: Dict[str, Any], ai_narrative: str = "") -> List[str]:
+    lines = ["", "ANALISIS & REKOMENDASI (deterministik, bukan diagnosis)"]
+    lines += [f"• {h}" for h in analysis["highlights"]]
+    lines += ["Rekomendasi layanan:"] + [f"  - {r}" for r in analysis["recommendations"]]
+    if ai_narrative:
+        lines += ["", "Narasi AI (pendukung):"]
+        import textwrap
+        for paragraph in ai_narrative.splitlines():
+            lines += textwrap.wrap(paragraph, 110) or [""]
+    return lines
+
+
+def consult_counts(people: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts = {target: 0 for target in CONSULT_TARGETS}
+    for person in people:
+        step = person.get("third_step") or {}
+        if str(step.get("want_discussion", "")).lower() != "ya":
+            continue
+        target = "".join(str(step.get("discussion_with", "")).lower().split())
+        matched = next((label for label in CONSULT_TARGETS[:-1] if target and ("".join(label.lower().split()) in target or target in "".join(label.lower().split()))), "Lain-lain")
+        counts[matched] += 1
+    return counts
+
+
+def official_pdf(title: str, subtitle: str, header_fields: List[tuple], columns: List[tuple], rows: List[List[Any]], footer: List[str], filename: str) -> Response:
+    """PDF mengikuti Tabel 7/8 pedoman AUM: kepala surat RAHASIA, identitas, tabel bidang, dan blok konsultasi."""
     buffer = io.BytesIO()
     document = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
     document.setTitle(title)
-    document.setFont("Helvetica-Bold", 15)
-    document.drawString(42, height - 52, title)
+    margin = 40
+    document.setFont("Helvetica-Bold", 9)
+    document.rect(width - margin - 62, height - 48, 62, 18)
+    document.drawCentredString(width - margin - 31, height - 43, "RAHASIA")
+    document.setFont("Helvetica-Bold", 13)
+    document.drawCentredString(width / 2, height - 60, title)
+    document.setFont("Helvetica", 10)
+    document.drawCentredString(width / 2, height - 75, subtitle)
+    y = height - 100
     document.setFont("Helvetica", 9)
-    y = height - 78
-    for line in lines:
-        if y < 46:
+    for label, value in header_fields:
+        document.drawString(margin, y, f"{label}")
+        document.drawString(margin + 130, y, f": {value}")
+        y -= 14
+    y -= 8
+    total_width = width - 2 * margin
+    col_widths = [total_width * share for _, share in columns]
+    row_height = 18
+
+    def draw_header(top: float) -> float:
+        document.setFont("Helvetica-Bold", 7)
+        x = margin
+        for (label, _), col_width in zip(columns, col_widths):
+            document.rect(x, top - row_height, col_width, row_height)
+            document.drawCentredString(x + col_width / 2, top - 12, label)
+            x += col_width
+        return top - row_height
+
+    y = draw_header(y)
+    document.setFont("Helvetica", 8)
+    for row in rows:
+        if y - row_height < 90:
             document.showPage()
-            document.setFont("Helvetica", 9)
-            y = height - 46
-        document.drawString(42, y, str(line)[:125])
-        y -= 15
+            y = height - 60
+            y = draw_header(y)
+            document.setFont("Helvetica", 8)
+        x = margin
+        is_total = str(row[0]).lower().startswith("keseluruhan")
+        document.setFont("Helvetica-Bold" if is_total else "Helvetica", 8)
+        for index, (value, col_width) in enumerate(zip(row, col_widths)):
+            document.rect(x, y - row_height, col_width, row_height)
+            text = str(value)
+            max_chars = max(int(col_width / 4.2), 4)
+            if len(text) > max_chars:
+                text = text[: max_chars - 1] + "…"
+            if index == 0:
+                document.drawString(x + 4, y - 12, text)
+            else:
+                document.drawCentredString(x + col_width / 2, y - 12, text)
+            x += col_width
+        y -= row_height
+    y -= 18
+    document.setFont("Helvetica", 9)
+    import textwrap
+    for raw_line in footer:
+        for line in (textwrap.wrap(raw_line, 105, subsequent_indent="   ") or [""]):
+            if y < 60:
+                document.showPage()
+                y = height - 60
+            document.drawString(margin, y, line)
+            y -= 14
+    document.drawString(width - margin - 200, max(y - 10, 40), f"Pengolah Data, {datetime.now().strftime('%d-%m-%Y')}")
     document.save()
     buffer.seek(0)
     return Response(content=buffer.getvalue(), media_type="application/pdf", headers={"Content-Disposition": f"attachment; filename={filename}"})
@@ -726,26 +1167,45 @@ def pdf_response(title: str, lines: List[str], filename: str) -> Response:
 @api_router.get("/export/{scope}/{identifier}")
 async def export_result(scope: str, identifier: str, file_format: str = Query("xlsx", alias="format"), user: CurrentUser = Depends(current_user)) -> Response:
     if scope == "individual":
-        person = await db.respondents.find_one({"id": identifier, "mode": user.mode}, {"_id": 0})
+        person = await db.respondents.find_one({"id": identifier, "owner_id": user.user_id}, {"_id": 0})
         if not person:
             raise HTTPException(404, "Responden tidak ditemukan.")
         result = score_individual(person["format_id"], person.get("selected_problem_numbers", []), person.get("heavy_problem_numbers", []))
+        config = FORMATS[person["format_id"]]
         rows = [{"bidang": row["domain_code"], "nama_bidang": row["domain_name"], "nomor_masalah": ", ".join(str(number).zfill(3) for number in row["problem_numbers"]), "JML": row["count"], "persentase": row["percentage"], "masalah_berat": ", ".join(str(number).zfill(3) for number in row["heavy_problem_numbers"])} for row in result["rows"]]
-        title = f"Hasil AUM Individual - {person['name']}"
         if file_format.lower() == "pdf":
-            lines = [f"Responden: {person['name']}", f"ID: {person.get('respondent_id', '')}", f"Total masalah: {result['total_problems']} | Masalah berat: {result['total_heavy_problems']}"] + [f"{row['bidang']} | JML {row['JML']} | {row['persentase']}% | Berat {row['masalah_berat'] or '-'}" for row in rows]
-            return pdf_response(title, lines, "hasil-aum-individual.pdf")
+            step = person.get("third_step") or {}
+            table = [[f"{i}. {row['nama_bidang']} — {row['bidang']}", row["nomor_masalah"] or "-", row["JML"], f"{row['persentase']}%", row["masalah_berat"] or "-"] for i, row in enumerate(rows, start=1)]
+            table.append(["Keseluruhan", f"{result['total_problems']} nomor", result["total_problems"], f"{result['overall_percentage']}%", result["total_heavy_problems"]])
+            return official_pdf(
+                "TABEL 7 : HASIL PENGOLAHAN AUM", f"SERI UMUM FORMAT {config['code'][-1]} ({config['target']}) — INDIVIDUAL",
+                [("Nama", person["name"]), ("NIS/NIM/NIP/NIK", person.get("respondent_id") or "-"), ("Jenis Kelamin", "Laki-laki" if person.get("gender") == "L" else "Perempuan" if person.get("gender") == "P" else "-"), ("Kelas/Sekolah", f"{person.get('class_name') or '-'} / {person.get('institution') or '-'}"), ("Tahun Ajaran", person.get("academic_year") or "-"), ("Tanggal", person.get("filled_date") or "-"), ("Pengolah AUM", user.name)],
+                [("BIDANG MASALAH", 0.34), ("NOMOR MASALAH", 0.34), ("JML", 0.08), ("%", 0.09), ("NO. MASALAH BERAT", 0.15)],
+                table,
+                [f"Ingin mengkonsultasikan masalah kepada : {step.get('discussion_with') or '-' if str(step.get('want_discussion', '')).lower() == 'ya' else 'Tidak'}", f"Masalah lain yang belum tercantum : {step.get('other_problems') or '-'}", "Catatan: hasil bersifat deskriptif dan rahasia; bukan diagnosis psikologis."] + analysis_lines(analyze_individual(person, result), await cached_narrative("individual", identifier, user)),
+                "hasil-aum-individual.pdf",
+            )
         return xlsx_response(rows, "hasil-aum-individual.xlsx")
     if scope == "group":
-        people = await db.respondents.find({"class_id": identifier, "mode": user.mode}, {"_id": 0}).to_list(1000)
+        people = await db.respondents.find({"class_id": identifier, "owner_id": user.user_id}, {"_id": 0}).to_list(1000)
         if not people:
             raise HTTPException(404, "Belum ada responden pada kelompok ini.")
         group = await scoring_group(GroupInput(format_id=people[0]["format_id"], class_id=identifier), user)
         rows = [{"bidang": row["domain_code"], "nama_bidang": row["domain_name"], "terendah": row["lowest"], "tertinggi": row["highest"], "JML": row["total"], "persentase": row["percentage"], "rata_rata": row["average"], "JML_berat": row["heavy_total"], "rata_rata_berat": row["heavy_average"]} for row in group["rows"]]
-        title = "Hasil AUM Kelompok"
         if file_format.lower() == "pdf":
-            lines = [f"Jumlah responden: {group['respondent_count']}", f"Total masalah: {group['total_problems']} | Masalah berat: {group['total_heavy_problems']}"] + [f"{row['bidang']} | {row['JML']} | {row['persentase']}% | berat {row['JML_berat']}" for row in rows]
-            return pdf_response(title, lines, "hasil-aum-kelompok.pdf")
+            cls = await db.classes.find_one({"id": identifier, "owner_id": user.user_id}, {"_id": 0}) or {}
+            config = FORMATS[people[0]["format_id"]]
+            counts = consult_counts(people)
+            table = [[f"{i}. {row['nama_bidang']} — {row['bidang']}", row["terendah"], row["tertinggi"], row["JML"], f"{row['persentase']}%", row["rata_rata"], row["JML_berat"], row["rata_rata_berat"]] for i, row in enumerate(rows, start=1)]
+            table.append(["Keseluruhan", min(len(p.get("selected_problem_numbers", [])) for p in people), max(len(p.get("selected_problem_numbers", [])) for p in people), group["total_problems"], f"{round(group['total_problems'] / config['total_items'] / len(people) * 100, 2)}%", group["average_problems"], group["total_heavy_problems"], group["average_heavy_problems"]])
+            return official_pdf(
+                "TABEL 8 : HASIL PENGOLAHAN AUM", f"SERI UMUM FORMAT {config['code'][-1]} ({config['target']}) — KELOMPOK",
+                [("Nama Sekolah/Kelompok", people[0].get("institution") or "-"), ("Kelas/Kelompok", cls.get("name") or people[0].get("class_name") or "-"), ("Jumlah Anggota", f"{group['respondent_count']} orang"), ("Tahun Ajaran", people[0].get("academic_year") or "-"), ("Tanggal Pengadm. AUM", max((p.get("filled_date") or "" for p in people), default="-") or "-"), ("Pengolah AUM", user.name)],
+                [("BIDANG MASALAH", 0.30), ("TERENDAH", 0.09), ("TERTINGGI", 0.09), ("JML", 0.09), ("%", 0.10), ("RATA² / SISWA", 0.11), ("JML BERAT", 0.10), ("RATA² BERAT", 0.12)],
+                table,
+                ["Ingin mengkonsultasikan masalah kepada :"] + [f"   {label:<12}: {counts[label]} orang" for label in CONSULT_TARGETS] + ["Catatan: hasil bersifat deskriptif dan rahasia; bukan diagnosis psikologis."] + analysis_lines(analyze_group(group, people, cls.get("name") or people[0].get("class_name", "")), await cached_narrative("group", identifier, user)),
+                "hasil-aum-kelompok.pdf",
+            )
         return xlsx_response(rows, "hasil-aum-kelompok.xlsx")
     raise HTTPException(400, "Jenis export tidak dikenal.")
 
